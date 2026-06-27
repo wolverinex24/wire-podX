@@ -22,6 +22,22 @@ if [[ ${UNAME} == *"Darwin"* ]]; then
 fi
 VOSK_DIR="${ROOT}/.vosk/libvosk"
 
+if [[ ${UNAME} == *"Darwin"* ]]; then
+    export HOME="/var/root"
+    if [[ -L /var/root/.anki_vector ]]; then
+        rm /var/root/.anki_vector
+    fi
+    if [[ ! -d /var/root/.anki_vector ]]; then
+        mkdir -p /var/root/.anki_vector
+        if [[ -d "${ROOT}/.anki_vector" ]]; then
+            cp -R "${ROOT}/.anki_vector"/* /var/root/.anki_vector/
+            if [[ -f /var/root/.anki_vector/sdk_config.ini ]]; then
+                sed -i '' "s|${ROOT}|/var/root|g" /var/root/.anki_vector/sdk_config.ini
+            fi
+        fi
+    fi
+fi
+
 #if [[ ! -f ./chipper ]]; then
 #   if [[ -f ./go.mod ]]; then
 #     echo "You need to build chipper first. This can be done with the setup.sh script."
