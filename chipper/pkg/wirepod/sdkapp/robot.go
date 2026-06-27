@@ -120,7 +120,13 @@ func getRobot(serial string) (Robot, int, error) {
 	}
 	for index, robot := range robots {
 		if strings.EqualFold(serial, robot.ESN) {
-			return robot, index, nil
+			_, err := robot.Vector.Conn.BatteryState(context.Background(), &vectorpb.BatteryStateRequest{})
+			if err == nil {
+				return robot, index, nil
+			}
+			logger.Println("Cached connection to " + serial + " is dead or unauthenticated: " + err.Error() + ". Reconnecting...")
+			removeRobot(serial, "getRobot")
+			break
 		}
 	}
 	return newRobot(serial)
