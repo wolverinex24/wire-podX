@@ -3,6 +3,8 @@ package vars
 import (
 	"encoding/json"
 	"os"
+	"strings"
+	"unicode"
 
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 )
@@ -86,7 +88,14 @@ func normalizeSTTConfig() {
 	}
 }
 
+func sanitizeConfig() {
+	APIConfig.Knowledge.Key = strings.TrimFunc(APIConfig.Knowledge.Key, unicode.IsSpace)
+	APIConfig.Knowledge.Endpoint = strings.TrimFunc(APIConfig.Knowledge.Endpoint, unicode.IsSpace)
+	APIConfig.STT.Groq.APIKey = strings.TrimFunc(APIConfig.STT.Groq.APIKey, unicode.IsSpace)
+}
+
 func WriteConfigToDisk() {
+	sanitizeConfig()
 	logger.Println("Configuration changed, writing to disk")
 	writeBytes, _ := json.Marshal(APIConfig)
 	os.WriteFile(ApiConfigPath, writeBytes, 0644)
@@ -158,6 +167,7 @@ func ReadConfig() {
 			logger.Println(err)
 			return
 		}
+		sanitizeConfig()
 		// stt service is the only thing controlled by shell
 		if APIConfig.STT.Service != os.Getenv("STT_SERVICE") {
 			WriteSTT()

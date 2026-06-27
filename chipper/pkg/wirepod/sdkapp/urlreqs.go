@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/tls"
 	"net/http"
+
+	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 )
 
 var transCfg = &http.Transport{
@@ -19,7 +21,8 @@ func setCustomEyeColor(robot Robot, hue string, sat string) {
 	client := &http.Client{Transport: transCfg}
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		logger.Println("setCustomEyeColor error: " + err.Error())
+		return
 	}
 	defer resp.Body.Close()
 }
@@ -33,7 +36,8 @@ func setPresetEyeColor(robot Robot, value string) {
 	client := &http.Client{Transport: transCfg}
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		logger.Println("setPresetEyeColor error: " + err.Error())
+		return
 	}
 	defer resp.Body.Close()
 }
@@ -47,7 +51,8 @@ func setSettingSDKstring(robot Robot, setting string, value string) {
 	client := &http.Client{Transport: transCfg}
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		logger.Println("setSettingSDKstring error: " + err.Error())
+		return
 	}
 	defer resp.Body.Close()
 }
@@ -61,7 +66,8 @@ func setSettingSDKintbool(robot Robot, setting string, value string) {
 	client := &http.Client{Transport: transCfg}
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		logger.Println("setSettingSDKintbool error: " + err.Error())
+		return
 	}
 	defer resp.Body.Close()
 }

@@ -104,7 +104,7 @@ func newRobot(serial string) (Robot, int, error) {
 	robotIndex := len(robots) - 1
 
 	// begin inactivity timer
-	go connTimer(robotIndex)
+	go connTimer(RobotObj.ESN)
 
 	inhibitCreation = false
 	return RobotObj, robotIndex, nil
@@ -134,15 +134,25 @@ func getRobot(serial string) (Robot, int, error) {
 
 // if connection is inactive for more than 5 minutes, remove robot
 // run this as a goroutine
-func connTimer(ind int) {
-	// Check if the index is in the list
-	if len(robots) <= ind {
-		return
-	}
-
-	robots[ind].ConnTimer = 0
+func connTimer(serial string) {
+	connTimerVal := 0
 	for {
 		time.Sleep(time.Second)
+		// Find the robot index dynamically
+		found := false
+		var ind int
+		for i, robot := range robots {
+			if strings.EqualFold(robot.ESN, serial) {
+				ind = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			logger.Println("Conn timer for " + serial + " exiting (robot removed)")
+			return
+		}
+
 		// check if timer needs to be stopped
 		for _, num := range timerStopIndexes {
 			if num == ind {
@@ -157,12 +167,13 @@ func connTimer(ind int) {
 				return
 			}
 		}
-		if robots[ind].ConnTimer >= 300 {
+		if connTimerVal >= 300 {
 			logger.Println("Closing SDK connection for " + robots[ind].ESN + ", source: connTimer")
 			removeRobot(robots[ind].ESN, "connTimer")
 			return
 		}  
-		robots[ind].ConnTimer = robots[ind].ConnTimer + 1
+		robots[ind].ConnTimer = int32(connTimerVal)
+		connTimerVal++
 	}
 }
 
