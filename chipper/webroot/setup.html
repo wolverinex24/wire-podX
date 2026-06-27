@@ -34,7 +34,7 @@
         </div>
         <div class="main-nav-child">
           <a href="#" onclick="showLanguage(); return false;"><i class="fa-solid fa-language" id="icon-Language"
-              name="icon"></i><br />Set Language</a>
+            name="icon"></i><br />STT Setup</a>
         </div>
         <!--<div class="main-nav-child"><a href="#" onclick="showRestart(); return false;"><i class="fa solid fa-arrow-rotate-right" id="icon-Restart" name="icon"></i><br/>Restart Wire-Pod</a></div> -->
       </div>
@@ -208,12 +208,27 @@
       </div>
 
       <div id="section-language" style="display: none">
-        <h2>STT Language</h2>
+        <h2>STT Setup</h2>
         <hr class="small-hr">
-        <p>Set the speech-to-text language you'd like wire-pod to use.</p>
+        <p>Configure speech-to-text. When Groq is enabled, wire-pod will fall back to the on-device Vosk model.</p>
         <hr class="small-hr">
         <div id="languageStatus"></div>
+        <div id="groqConfigDiv" style="display: none">
+          <label for="groqApiKey">Groq API Key:</label>
+          <input type="text" name="groqApiKey" id="groqApiKey" /><br />
+          <label for="groqModel">Groq Model <small class="desc">(optional, defaults to whisper-large-v3)</small>:</label>
+          <input type="text" name="groqModel" id="groqModel" placeholder="whisper-large-v3" /><br />
+          <label for="groqLanguage">Groq Language <small class="desc">(optional ISO-639-1 code such as en)</small>:</label>
+          <input type="text" name="groqLanguage" id="groqLanguage" placeholder="auto-detect" /><br />
+          <label for="groqPrompt">Groq Prompt <small class="desc">(optional vocabulary hint)</small>:</label>
+          <input type="text" name="groqPrompt" id="groqPrompt" /><br />
+          <label for="groqEndpoint">Groq Endpoint <small class="desc">(optional override)</small>:</label>
+          <input type="text" name="groqEndpoint" id="groqEndpoint" placeholder="https://api.groq.com/openai/v1/audio/transcriptions" /><br />
+          <small class="desc">Fallback on-device model: Vosk.</small>
+          <hr class="small-hr">
+        </div>
         <div id="languageSelectionDiv">
+          <label for="languageSelection">On-device fallback language:</label>
           <div>
             <select name="languageSelection" id="languageSelection">
               <option value="en-US">English (US)</option>

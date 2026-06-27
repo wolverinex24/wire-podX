@@ -1,11 +1,14 @@
 package wirepod_ttr
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -187,10 +190,10 @@ func CreateAIReq(transcribedText, esn string, gpt3tryagain, isKG bool) openai.Ch
 }
 
 func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bool) (string, error) {
-	start := make(chan bool)
-	stop := make(chan bool)
-	stopStop := make(chan bool)
-	kgReadyToAnswer := make(chan bool)
+	start := make(chan bool, 1)
+	stop := make(chan bool, 1)
+	stopStop := make(chan bool, 1)
+	kgReadyToAnswer := make(chan bool, 1)
 	kgStopLooping := false
 	ctx := context.Background()
 	matched := false
@@ -250,11 +253,129 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 		c = openai.NewClientWithConfig(conf)
 	case "custom":
 		conf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
-		conf.BaseURL = vars.APIConfig.Knowledge.Endpoint
+		conf.BaseURL = CleanEndpoint(vars.APIConfig.Knowledge.Endpoint)
 		c = openai.NewClientWithConfig(conf)
 	case "openai":
 		c = openai.NewClient(vars.APIConfig.Knowledge.Key)
 	}
+	if vars.APIConfig.Knowledge.Provider == "custom" && vars.APIConfig.Knowledge.Model == "" {
+		payload := map[string]string{
+			"text": transcribedText,
+			"esn":  esn,
+		}
+		jsonBytes, err := json.Marshal(payload)
+		if err != nil {
+			return "", err
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		httpReq, err := http.NewRequest("POST", vars.APIConfig.Knowledge.Endpoint, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			return "", err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			if isKG {
+				kgStopLooping = true
+				for range kgReadyToAnswer {
+					break
+				}
+				stop <- true
+				time.Sleep(time.Second / 3)
+				KGSim(esn, "Could not connect to custom endpoint.")
+			}
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		responseText := string(bodyBytes)
+
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &parsed); err == nil {
+			keys := []string{"response", "text", "output", "message"}
+			for _, k := range keys {
+				if v, ok := parsed[k]; ok {
+					if s, ok := v.(string); ok && s != "" {
+						responseText = s
+						break
+					}
+				}
+			}
+		}
+
+		responseText = removeSpecialCharacters(responseText)
+
+		if isKG {
+			kgStopLooping = true
+			for range kgReadyToAnswer {
+				break
+			}
+			<-start
+			time.Sleep(time.Millisecond * 300)
+			robot.Conn.PlayAnimation(
+				ctx,
+				&vectorpb.PlayAnimationRequest{
+					Animation: &vectorpb.Animation{
+						Name: "anim_getin_tts_01",
+					},
+					Loops: 1,
+				},
+			)
+			textToSaySplit := strings.Split(responseText, ". ")
+			for _, str := range textToSaySplit {
+				_, err := robot.Conn.SayText(
+					ctx,
+					&vectorpb.SayTextRequest{
+						Text:           str + ".",
+						UseVectorVoice: true,
+						DurationScalar: 1.0,
+					},
+				)
+				if err != nil {
+					break
+				}
+			}
+			stop <- true
+		} else {
+			BControl(robot, ctx, start, stop)
+			<-start
+			IntentPass(req, "intent_greeting_hello", transcribedText, map[string]string{}, false)
+			time.Sleep(time.Millisecond * 300)
+			robot.Conn.PlayAnimation(
+				ctx,
+				&vectorpb.PlayAnimationRequest{
+					Animation: &vectorpb.Animation{
+						Name: "anim_getin_tts_01",
+					},
+					Loops: 1,
+				},
+			)
+			textToSaySplit := strings.Split(responseText, ". ")
+			for _, str := range textToSaySplit {
+				_, err := robot.Conn.SayText(
+					ctx,
+					&vectorpb.SayTextRequest{
+						Text:           str + ".",
+						UseVectorVoice: true,
+						DurationScalar: 1.0,
+					},
+				)
+				if err != nil {
+					break
+				}
+			}
+			stop <- true
+		}
+		return responseText, nil
+	}
+
 	speakReady := make(chan string)
 	successIntent := make(chan bool)
 
@@ -412,93 +533,92 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 
 	var stopTTSLoop bool
 	TTSLoopStopped := make(chan bool)
-	for range start {
-		if isKG {
-			kgStopLooping = true
-			for range kgReadyToAnswer {
-				break
-			}
-		} else {
-			time.Sleep(time.Millisecond * 300)
+	<-start
+	if isKG {
+		kgStopLooping = true
+		for range kgReadyToAnswer {
+			break
 		}
-		robot.Conn.PlayAnimation(
-			ctx,
-			&vectorpb.PlayAnimationRequest{
-				Animation: &vectorpb.Animation{
-					Name: TTSGetinAnimation,
-				},
-				Loops: 1,
+	} else {
+		time.Sleep(time.Millisecond * 300)
+	}
+	robot.Conn.PlayAnimation(
+		ctx,
+		&vectorpb.PlayAnimationRequest{
+			Animation: &vectorpb.Animation{
+				Name: TTSGetinAnimation,
 			},
-		)
-		if !vars.APIConfig.Knowledge.CommandsEnable {
-			go func() {
-				for {
-					if stopTTSLoop {
-						TTSLoopStopped <- true
-						break
-					}
-					robot.Conn.PlayAnimation(
-						ctx,
-						&vectorpb.PlayAnimationRequest{
-							Animation: &vectorpb.Animation{
-								Name: TTSLoopAnimation,
-							},
-							Loops: 1,
-						},
-					)
-				}
-			}()
-		}
-		var disconnect bool
-		numInResp := 0
-		for {
-			respSlice := fullRespSlice
-			if len(respSlice)-1 < numInResp {
-				if !isDone {
-					logger.Println("Waiting for more content from LLM...")
-					for range speakReady {
-						respSlice = fullRespSlice
-						break
-					}
-				} else {
+			Loops: 1,
+		},
+	)
+	if !vars.APIConfig.Knowledge.CommandsEnable {
+		go func() {
+			for {
+				if stopTTSLoop {
+					TTSLoopStopped <- true
 					break
 				}
+				robot.Conn.PlayAnimation(
+					ctx,
+					&vectorpb.PlayAnimationRequest{
+						Animation: &vectorpb.Animation{
+							Name: TTSLoopAnimation,
+						},
+						Loops: 1,
+					},
+				)
 			}
-			if interrupted {
+		}()
+	}
+	var disconnect bool
+	numInResp := 0
+	for {
+		respSlice := fullRespSlice
+		if len(respSlice)-1 < numInResp {
+			if !isDone {
+				logger.Println("Waiting for more content from LLM...")
+				for range speakReady {
+					respSlice = fullRespSlice
+					break
+				}
+			} else {
 				break
 			}
-			logger.Println(respSlice[numInResp])
-			acts := GetActionsFromString(respSlice[numInResp])
-			nChat[len(nChat)-1].Content = fullRespText
-			disconnect = PerformActions(nChat, acts, robot, stopStop)
-			if disconnect {
-				break
-			}
-			numInResp = numInResp + 1
 		}
-		if !vars.APIConfig.Knowledge.CommandsEnable {
-			stopTTSLoop = true
-			for range TTSLoopStopped {
-				break
-			}
+		if interrupted {
+			break
 		}
-		time.Sleep(time.Millisecond * 100)
-		// if isKG {
-		// 	robot.Conn.PlayAnimation(
-		// 		ctx,
-		// 		&vectorpb.PlayAnimationRequest{
-		// 			Animation: &vectorpb.Animation{
-		// 				Name: "anim_knowledgegraph_success_01",
-		// 			},
-		// 			Loops: 1,
-		// 		},
-		// 	)
-		// 	time.Sleep(time.Millisecond * 3300)
-		// }
-		if !interrupted {
-			stopStop <- true
-			stop <- true
+		logger.Println(respSlice[numInResp])
+		acts := GetActionsFromString(respSlice[numInResp])
+		nChat[len(nChat)-1].Content = fullRespText
+		disconnect = PerformActions(nChat, acts, robot, stopStop)
+		if disconnect {
+			break
 		}
+		numInResp = numInResp + 1
+	}
+	if !vars.APIConfig.Knowledge.CommandsEnable {
+		stopTTSLoop = true
+		for range TTSLoopStopped {
+			break
+		}
+	}
+	time.Sleep(time.Millisecond * 100)
+	// if isKG {
+	// 	robot.Conn.PlayAnimation(
+	// 		ctx,
+	// 		&vectorpb.PlayAnimationRequest{
+	// 			Animation: &vectorpb.Animation{
+	// 				Name: "anim_knowledgegraph_success_01",
+	// 			},
+	// 			Loops: 1,
+	// 		},
+	// 	)
+	// 	time.Sleep(time.Millisecond * 3300)
+	// }
+	if !interrupted {
+		stopStop <- true
+		stop <- true
 	}
 	return "", nil
 }
@@ -532,8 +652,8 @@ func KGSim(esn string, textToSay string) error {
 		},
 	}
 	go func() {
-		start := make(chan bool)
-		stop := make(chan bool)
+		start := make(chan bool, 1)
+		stop := make(chan bool, 1)
 
 		go func() {
 			// * begin - modified from official vector-go-sdk
@@ -562,86 +682,100 @@ func KGSim(esn string, textToSay string) error {
 				}
 			}
 
-			for {
-				select {
-				case <-stop:
-					logger.Println("KGSim: releasing behavior control (interrupt)")
-					if err := r.Send(
-						&vectorpb.BehaviorControlRequest{
-							RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
-								ControlRelease: &vectorpb.ControlRelease{},
-							},
-						},
-					); err != nil {
-						log.Println(err)
-						return
-					}
-					return
-				default:
-					continue
-				}
+			<-stop
+			logger.Println("KGSim: releasing behavior control (interrupt)")
+			if err := r.Send(
+				&vectorpb.BehaviorControlRequest{
+					RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
+						ControlRelease: &vectorpb.ControlRelease{},
+					},
+				},
+			); err != nil {
+				log.Println(err)
+				return
 			}
+			return
 			// * end - modified from official vector-go-sdk
 		}()
 
 		var stopTTSLoop bool
 		var TTSLoopStopped bool
-		for range start {
-			time.Sleep(time.Millisecond * 300)
-			robot.Conn.PlayAnimation(
-				ctx,
-				&vectorpb.PlayAnimationRequest{
-					Animation: &vectorpb.Animation{
-						Name: "anim_getin_tts_01",
-					},
-					Loops: 1,
+		<-start
+		time.Sleep(time.Millisecond * 300)
+		robot.Conn.PlayAnimation(
+			ctx,
+			&vectorpb.PlayAnimationRequest{
+				Animation: &vectorpb.Animation{
+					Name: "anim_getin_tts_01",
 				},
-			)
-			go func() {
-				for {
-					if stopTTSLoop {
-						TTSLoopStopped = true
-						break
-					}
-					robot.Conn.PlayAnimation(
-						ctx,
-						&vectorpb.PlayAnimationRequest{
-							Animation: &vectorpb.Animation{
-								Name: "anim_tts_loop_02",
-							},
-							Loops: 1,
-						},
-					)
+				Loops: 1,
+			},
+		)
+		go func() {
+			for {
+				if stopTTSLoop {
+					TTSLoopStopped = true
+					break
 				}
-			}()
-			textToSaySplit := strings.Split(textToSay, ". ")
-			for _, str := range textToSaySplit {
-				_, err := robot.Conn.SayText(
+				robot.Conn.PlayAnimation(
 					ctx,
-					&vectorpb.SayTextRequest{
-						Text:           str + ".",
-						UseVectorVoice: true,
-						DurationScalar: 1.0,
+					&vectorpb.PlayAnimationRequest{
+						Animation: &vectorpb.Animation{
+							Name: "anim_tts_loop_02",
+						},
+						Loops: 1,
 					},
 				)
-				if err != nil {
-					logger.Println("KG SayText error: " + err.Error())
-					stop <- true
-					break
-				}
 			}
-			stopTTSLoop = true
-			for {
-				if TTSLoopStopped {
-					break
-				} else {
-					time.Sleep(time.Millisecond * 10)
-				}
+		}()
+		textToSaySplit := strings.Split(textToSay, ". ")
+		for _, str := range textToSaySplit {
+			_, err := robot.Conn.SayText(
+				ctx,
+				&vectorpb.SayTextRequest{
+					Text:           str + ".",
+					UseVectorVoice: true,
+					DurationScalar: 1.0,
+				},
+			)
+			if err != nil {
+				logger.Println("KG SayText error: " + err.Error())
+				stop <- true
+				break
 			}
-			time.Sleep(time.Millisecond * 100)
-			//time.Sleep(time.Millisecond * 3300)
-			stop <- true
 		}
+		stopTTSLoop = true
+		for {
+			if TTSLoopStopped {
+				break
+			} else {
+				time.Sleep(time.Millisecond * 10)
+			}
+		}
+		time.Sleep(time.Millisecond * 100)
+		//time.Sleep(time.Millisecond * 3300)
+		stop <- true
 	}()
 	return nil
+}
+
+func CleanEndpoint(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return ""
+	}
+	endpoint = strings.TrimRight(endpoint, "/")
+	suffixes := []string{
+		"/chat/completions",
+		"/chat",
+		"/completions",
+		"/responses",
+	}
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(endpoint, suffix) {
+			endpoint = strings.TrimSuffix(endpoint, suffix)
+			endpoint = strings.TrimRight(endpoint, "/")
+		}
+	}
+	return endpoint
 }

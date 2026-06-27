@@ -220,12 +220,39 @@ func handleGetKGAPI(w http.ResponseWriter) {
 func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Language string `json:"language"`
+		Groq     struct {
+			APIKey   string `json:"api_key"`
+			Model    string `json:"model"`
+			Language string `json:"language"`
+			Prompt   string `json:"prompt"`
+			Endpoint string `json:"endpoint"`
+		} `json:"groq"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if vars.APIConfig.STT.Service == "vosk" {
+	if vars.APIConfig.STT.Service == "groq" {
+		vars.APIConfig.STT.FallbackService = "vosk"
+		vars.APIConfig.STT.Groq.APIKey = strings.TrimSpace(request.Groq.APIKey)
+		vars.APIConfig.STT.Groq.Model = strings.TrimSpace(request.Groq.Model)
+		vars.APIConfig.STT.Groq.Language = strings.TrimSpace(request.Groq.Language)
+		vars.APIConfig.STT.Groq.Prompt = strings.TrimSpace(request.Groq.Prompt)
+		vars.APIConfig.STT.Groq.Endpoint = strings.TrimSpace(request.Groq.Endpoint)
+		if !isValidLanguage(request.Language, localization.ValidVoskModels) {
+			http.Error(w, "language not valid", http.StatusBadRequest)
+			return
+		}
+		vars.APIConfig.STT.Language = request.Language
+		vars.APIConfig.PastInitialSetup = true
+		vars.WriteConfigToDisk()
+		if !isDownloadedLanguage(request.Language, vars.DownloadedVoskModels) {
+			go localization.DownloadVoskModel(request.Language)
+			fmt.Fprint(w, "downloading language model...")
+			return
+		}
+	} else if vars.APIConfig.STT.Service == "whisper.cpp" {
+		vars.APIConfig.STT.FallbackService = "vosk"
 		if !isValidLanguage(request.Language, localization.ValidVoskModels) {
 			http.Error(w, "language not valid", http.StatusBadRequest)
 			return
@@ -235,13 +262,18 @@ func handleSetSTTInfo(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, "downloading language model...")
 			return
 		}
-	} else if vars.APIConfig.STT.Service == "whisper.cpp" {
+	} else if vars.APIConfig.STT.Service == "vosk" {
 		if !isValidLanguage(request.Language, localization.ValidVoskModels) {
 			http.Error(w, "language not valid", http.StatusBadRequest)
 			return
 		}
+		if !isDownloadedLanguage(request.Language, vars.DownloadedVoskModels) {
+			go localization.DownloadVoskModel(request.Language)
+			fmt.Fprint(w, "downloading language model...")
+			return
+		}
 	} else {
-		http.Error(w, "service must be vosk or whisper", http.StatusBadRequest)
+		http.Error(w, "service must be groq, vosk, or whisper", http.StatusBadRequest)
 		return
 	}
 	vars.APIConfig.STT.Language = request.Language

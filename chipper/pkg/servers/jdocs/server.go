@@ -76,8 +76,15 @@ func (s *JdocServer) ReadDocs(ctx context.Context, req *jdocspb.ReadDocsReq) (*j
 	if strings.Contains(req.Items[0].DocName, "vic.AppTokens") {
 		StoreBotInfo(ctx, req.Thing)
 		_, tokenExists := vars.GetJdoc(req.Thing, "vic.AppTokens")
-		if !tokenExists {
-			logger.Println("App tokens jdoc not found for this bot, trying bots in TokenHashStore")
+		hasPendingToken := false
+		for _, pair := range tokenserver.TokenHashStore {
+			if strings.EqualFold(pair[0], ipAddr) {
+				hasPendingToken = true
+				break
+			}
+		}
+		if !tokenExists || hasPendingToken {
+			logger.Println("App tokens jdoc matching required (pending token or new bot), trying bots in TokenHashStore")
 			matched := false
 			botGUID := ""
 			for num, pair := range tokenserver.TokenHashStore {

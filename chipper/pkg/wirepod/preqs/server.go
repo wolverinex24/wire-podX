@@ -31,7 +31,7 @@ var stiHandler func(sr.SpeechRequest) (string, map[string]string, error)
 var isSti bool = false
 
 func ReloadVosk() {
-	if vars.APIConfig.STT.Service == "vosk" || vars.APIConfig.STT.Service == "whisper.cpp" {
+	if vars.UsesLocalSTTLanguage() {
 		vars.SttInitFunc()
 		vars.IntentList, _ = vars.LoadIntents()
 	}
@@ -41,7 +41,7 @@ func ReloadVosk() {
 func New(InitFunc func() error, SttHandler interface{}, voiceProcessor string) (*Server, error) {
 
 	// Decide the TTS language
-	if voiceProcessor != "vosk" && voiceProcessor != "whisper.cpp" {
+	if !vars.UsesLocalSTTLanguage() {
 		vars.APIConfig.STT.Language = "en-US"
 	}
 	sttLanguage = vars.APIConfig.STT.Language

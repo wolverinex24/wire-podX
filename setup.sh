@@ -10,7 +10,11 @@ ROOT="/root"
 if [[ ${UNAME} == *"Darwin"* ]]; then
     if [[ -f /usr/local/Homebrew/bin/brew ]] || [[ -f /opt/Homebrew/bin/brew ]]; then
         TARGET="darwin"
-        ROOT="$HOME"
+        if [[ -n ${SUDO_USER} ]]; then
+            ROOT="$(eval echo "~${SUDO_USER}")"
+        else
+            ROOT="$HOME"
+        fi
         echo "macOS detected."
         if [[ ! -f /usr/local/go/bin/go ]]; then
             if [[ -f /usr/local/bin/go ]]; then
@@ -134,6 +138,47 @@ function getPackages() {
     echo
 }
 
+function setLibraryPathVar() {
+    if [[ ${TARGET} == "darwin" ]]; then
+        echo "DYLD_LIBRARY_PATH"
+    else
+        echo "LD_LIBRARY_PATH"
+    fi
+}
+
+function appendLibraryPath() {
+    local lib_var
+    lib_var="$(setLibraryPathVar)"
+    local current_value="${!lib_var}"
+    if [[ -n "${current_value}" ]]; then
+        export "${lib_var}=$1:${current_value}"
+    else
+        export "${lib_var}=$1"
+    fi
+}
+
+function configureVoskBuildEnv() {
+    local vosk_root="${ROOT}/.vosk/libvosk"
+    export CGO_ENABLED=1
+    export CGO_CFLAGS="-I${vosk_root}"
+    export CGO_LDFLAGS="-L${vosk_root} -lvosk -ldl -lpthread"
+    appendLibraryPath "${vosk_root}"
+}
+
+function configureWhisperBuildEnv() {
+    local whisper_root="$(pwd)/../whisper.cpp"
+    local whisper_build="${whisper_root}/build_go"
+    local vosk_root="${ROOT}/.vosk/libvosk"
+    export CGO_ENABLED=1
+    export CGO_CFLAGS="-I${whisper_root} -I${whisper_root}/include -I${whisper_root}/ggml/include -I${vosk_root}"
+    export CGO_LDFLAGS="-L${whisper_build}/src -L${whisper_build}/ggml/src -L${whisper_build}/ggml/src/ggml-blas -L${whisper_build}/ggml/src/ggml-metal -L${vosk_root} -lwhisper -lggml -lggml-base -lggml-cpu -lggml-blas -lggml-metal -lvosk -ldl -lpthread"
+    appendLibraryPath "${whisper_build}/src"
+    appendLibraryPath "${whisper_build}/ggml/src"
+    appendLibraryPath "${whisper_build}/ggml/src/ggml-blas"
+    appendLibraryPath "${whisper_build}/ggml/src/ggml-metal"
+    appendLibraryPath "${vosk_root}"
+}
+
 function getSTT() {
     echo "export DEBUG_LOGGING=true" > ./chipper/source.sh
     rm -f ./chipper/pico.key
@@ -218,10 +263,7 @@ function getSTT() {
             rm -fr "$VOSK_ARCHIVE"
             
             cd ${origDir}/chipper
-            export CGO_ENABLED=1
-            export CGO_CFLAGS="-I${ROOT}/.vosk/libvosk"
-            export CGO_LDFLAGS="-L ${ROOT}/.vosk/libvosk -lvosk -ldl -lpthread"
-            export LD_LIBRARY_PATH="${ROOT}/.vosk/libvosk:$LD_LIBRARY_PATH"
+            configureVoskBuildEnv
             /usr/local/go/bin/go get -u github.com/kercre123/vosk-api/go/...
             /usr/local/go/bin/go get github.com/kercre123/vosk-api
             /usr/local/go/bin/go install github.com/kercre123/vosk-api/go
@@ -594,23 +636,15 @@ function setupSystemd() {
         /usr/local/go/bin/go build -tags $GOTAGS -ldflags="${GOLDFLAGS}" cmd/leopard/main.go
         elif [[ ${STT_SERVICE} == "vosk" ]]; then
         echo "wire-pod.service created, building chipper with VOSK STT service..."
-        export CGO_ENABLED=1
-        export CGO_CFLAGS="-I/root/.vosk/libvosk"
-        export CGO_LDFLAGS="-L /root/.vosk/libvosk -lvosk -ldl -lpthread"
-        export LD_LIBRARY_PATH="/root/.vosk/libvosk:$LD_LIBRARY_PATH"
+        configureVoskBuildEnv
         /usr/local/go/bin/go build -tags $GOTAGS -ldflags="${GOLDFLAGS}" cmd/vosk/main.go
         elif [[ ${STT_SERVICE} == "whisper.cpp" ]]; then
         echo "wire-pod.service created, building chipper with Whisper.CPP STT service..."
-        export CGO_ENABLED=1
-        export C_INCLUDE_PATH="../whisper.cpp"
-        export LIBRARY_PATH="../whisper.cpp"
-        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$(pwd)/../whisper.cpp"
-        export CGO_LDFLAGS="-L$(pwd)/../whisper.cpp"
-        export CGO_CFLAGS="-I$(pwd)/../whisper.cpp"
+        configureWhisperBuildEnv
         /usr/local/go/bin/go build -tags $GOTAGS -ldflags="${GOLDFLAGS}" cmd/experimental/whisper.cpp/main.go
         elif [[ ${STT_SERVICE} == "groq" ]]; then
         echo "wire-pod.service created, building chipper with Groq cloud STT service..."
-        export CGO_ENABLED=1
+        configureVoskBuildEnv
         /usr/local/go/bin/go build -tags $GOTAGS -ldflags="${GOLDFLAGS}" cmd/groq/main.go
     else
         echo "wire-pod.service created, building chipper with Coqui STT service..."

@@ -38,8 +38,16 @@ type apiConfig struct {
 		Temperature            float32 `json:"temp"`
 	} `json:"knowledge"`
 	STT struct {
-		Service  string `json:"provider"`
-		Language string `json:"language"`
+		Service         string `json:"provider"`
+		Language        string `json:"language"`
+		FallbackService string `json:"fallback_provider"`
+		Groq            struct {
+			APIKey   string `json:"api_key"`
+			Model    string `json:"model"`
+			Language string `json:"language"`
+			Prompt   string `json:"prompt"`
+			Endpoint string `json:"endpoint"`
+		} `json:"groq"`
 	} `json:"STT"`
 	Server struct {
 		// false for ip, true for escape pod
@@ -48,6 +56,34 @@ type apiConfig struct {
 	} `json:"server"`
 	HasReadFromEnv   bool `json:"hasreadfromenv"`
 	PastInitialSetup bool `json:"pastinitialsetup"`
+}
+
+func IsLocalSTTService(service string) bool {
+	return service == "vosk" || service == "whisper.cpp"
+}
+
+func UsesVoskFallback() bool {
+	return APIConfig.STT.Service == "vosk" || APIConfig.STT.Service == "groq" || APIConfig.STT.Service == "whisper.cpp"
+}
+
+func ActiveLocalSTTService() string {
+	if IsLocalSTTService(APIConfig.STT.Service) {
+		return APIConfig.STT.Service
+	}
+	if APIConfig.STT.Service == "groq" && IsLocalSTTService(APIConfig.STT.FallbackService) {
+		return APIConfig.STT.FallbackService
+	}
+	return ""
+}
+
+func UsesLocalSTTLanguage() bool {
+	return ActiveLocalSTTService() != ""
+}
+
+func normalizeSTTConfig() {
+	if (APIConfig.STT.Service == "groq" || APIConfig.STT.Service == "whisper.cpp") && !IsLocalSTTService(APIConfig.STT.FallbackService) {
+		APIConfig.STT.FallbackService = "vosk"
+	}
 }
 
 func WriteConfigToDisk() {
@@ -86,9 +122,18 @@ func WriteSTT() {
 	// was not part of the original code, so this is its own function
 	// launched if stt not found in config
 	APIConfig.STT.Service = os.Getenv("STT_SERVICE")
-	if os.Getenv("STT_SERVICE") == "vosk" || os.Getenv("STT_SERVICE") == "whisper.cpp" {
+	APIConfig.STT.FallbackService = os.Getenv("STT_FALLBACK_SERVICE")
+	if (APIConfig.STT.Service == "groq" || APIConfig.STT.Service == "whisper.cpp") && APIConfig.STT.FallbackService == "" {
+		APIConfig.STT.FallbackService = "vosk"
+	}
+	if UsesLocalSTTLanguage() {
 		APIConfig.STT.Language = os.Getenv("STT_LANGUAGE")
 	}
+	APIConfig.STT.Groq.APIKey = os.Getenv("GROQ_API_KEY")
+	APIConfig.STT.Groq.Model = os.Getenv("GROQ_STT_MODEL")
+	APIConfig.STT.Groq.Language = os.Getenv("GROQ_STT_LANGUAGE")
+	APIConfig.STT.Groq.Prompt = os.Getenv("GROQ_STT_PROMPT")
+	APIConfig.STT.Groq.Endpoint = os.Getenv("GROQ_API_URL")
 }
 
 func ReadConfig() {
@@ -117,6 +162,7 @@ func ReadConfig() {
 		if APIConfig.STT.Service != os.Getenv("STT_SERVICE") {
 			WriteSTT()
 		}
+		normalizeSTTConfig()
 		if !APIConfig.HasReadFromEnv {
 			if APIConfig.Server.Port != os.Getenv("DDL_RPC_PORT") {
 				APIConfig.HasReadFromEnv = true

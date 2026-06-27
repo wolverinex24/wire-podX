@@ -209,6 +209,7 @@ func NewWP(serial string, useGlobal bool) (*vector.Vector, error) {
 	if err := c.Connect(); err != nil {
 		return nil, err
 	}
+	c.Close()
 	return vector.New(
 		vector.WithTarget(target),
 		vector.WithSerialNo(serial),

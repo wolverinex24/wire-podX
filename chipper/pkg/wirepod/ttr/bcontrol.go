@@ -18,8 +18,8 @@ func sayText(robot *vector.Vector, text string) {
 		},
 	}
 	go func() {
-		start := make(chan bool)
-		stop := make(chan bool)
+		start := make(chan bool, 1)
+		stop := make(chan bool, 1)
 		go func() {
 			// * begin - modified from official vector-go-sdk
 			r, err := robot.Conn.BehaviorControl(
@@ -47,37 +47,30 @@ func sayText(robot *vector.Vector, text string) {
 				}
 			}
 
-			for {
-				select {
-				case <-stop:
-					if err := r.Send(
-						&vectorpb.BehaviorControlRequest{
-							RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
-								ControlRelease: &vectorpb.ControlRelease{},
-							},
-						},
-					); err != nil {
-						log.Println(err)
-						return
-					}
-					return
-				default:
-					continue
-				}
+			<-stop
+			if err := r.Send(
+				&vectorpb.BehaviorControlRequest{
+					RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
+						ControlRelease: &vectorpb.ControlRelease{},
+					},
+				},
+			); err != nil {
+				log.Println(err)
+				return
 			}
+			return
 			// * end - modified from official vector-go-sdk
 		}()
-		for range start {
-			robot.Conn.SayText(
-				context.Background(),
-				&vectorpb.SayTextRequest{
-					Text:           text,
-					UseVectorVoice: true,
-					DurationScalar: 1.0,
-				},
-			)
-			stop <- true
-		}
+		<-start
+		robot.Conn.SayText(
+			context.Background(),
+			&vectorpb.SayTextRequest{
+				Text:           text,
+				UseVectorVoice: true,
+				DurationScalar: 1.0,
+			},
+		)
+		stop <- true
 	}()
 }
 
@@ -117,25 +110,19 @@ func BControl(robot *vector.Vector, ctx context.Context, start, stop chan bool) 
 			}
 		}
 
-		for {
-			select {
-			case <-stop:
-				logger.Println("KGSim: releasing behavior control (interrupt)")
-				if err := r.Send(
-					&vectorpb.BehaviorControlRequest{
-						RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
-							ControlRelease: &vectorpb.ControlRelease{},
-						},
-					},
-				); err != nil {
-					logger.Println(err)
-					return
-				}
-				return
-			default:
-				continue
-			}
+		<-stop
+		logger.Println("KGSim: releasing behavior control (interrupt)")
+		if err := r.Send(
+			&vectorpb.BehaviorControlRequest{
+				RequestType: &vectorpb.BehaviorControlRequest_ControlRelease{
+					ControlRelease: &vectorpb.ControlRelease{},
+				},
+			},
+		); err != nil {
+			logger.Println(err)
+			return
 		}
+		return
 		// * end - modified from official vector-go-sdk
 	}()
 }

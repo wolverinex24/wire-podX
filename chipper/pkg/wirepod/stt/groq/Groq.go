@@ -51,7 +51,9 @@ import (
 	"github.com/go-audio/audio"
 	"github.com/go-audio/wav"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
+	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	sr "github.com/kercre123/wire-pod/chipper/pkg/wirepod/speechrequest"
+	voskstt "github.com/kercre123/wire-pod/chipper/pkg/wirepod/stt/vosk"
 	"github.com/orcaman/writerseeker"
 )
 
@@ -81,29 +83,55 @@ type groqResp struct {
 	} `json:"error"`
 }
 
+func configOrEnv(configValue, envName string) string {
+	if trimmed := strings.TrimSpace(configValue); trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(os.Getenv(envName))
+}
+
 func apiURL() string {
-	if v := strings.TrimSpace(os.Getenv("GROQ_API_URL")); v != "" {
+	if v := configOrEnv(vars.APIConfig.STT.Groq.Endpoint, "GROQ_API_URL"); v != "" {
 		return v
 	}
 	return defaultURL
 }
 
 func model() string {
-	if v := strings.TrimSpace(os.Getenv("GROQ_STT_MODEL")); v != "" {
+	if v := configOrEnv(vars.APIConfig.STT.Groq.Model, "GROQ_STT_MODEL"); v != "" {
 		return v
 	}
 	return defaultModel
+}
+
+func groqAPIKey() string {
+	return configOrEnv(vars.APIConfig.STT.Groq.APIKey, "GROQ_API_KEY")
+}
+
+func groqLanguage() string {
+	return configOrEnv(vars.APIConfig.STT.Groq.Language, "GROQ_STT_LANGUAGE")
+}
+
+func groqPrompt() string {
+	return configOrEnv(vars.APIConfig.STT.Groq.Prompt, "GROQ_STT_PROMPT")
 }
 
 // Init validates configuration and logs the active settings. It intentionally
 // does NOT exit on a missing key (mirroring the built-in Whisper module) so
 // that wire-pod can still boot and present its web setup page.
 func Init() error {
-	if strings.TrimSpace(os.Getenv("GROQ_API_KEY")) == "" {
+	if groqAPIKey() == "" {
 		logger.Println("[groq-stt] WARNING: GROQ_API_KEY is not set. " +
-			"Set it in chipper/source.sh (export GROQ_API_KEY=\"...\") or transcription will fail.")
+			"Set it in the dashboard or chipper/source.sh (export GROQ_API_KEY=\"...\") or transcription will fail.")
 	}
-	lang := strings.TrimSpace(os.Getenv("GROQ_STT_LANGUAGE"))
+	if vars.ActiveLocalSTTService() == voskstt.Name {
+		if err := voskstt.Init(); err != nil {
+			logger.Println("[groq-stt] fallback init failed: " + err.Error())
+		} else {
+			logger.Println("[groq-stt] initialized local fallback: " + voskstt.Name)
+		}
+	}
+	lang := groqLanguage()
 	if lang == "" {
 		lang = "auto-detect"
 	}
@@ -176,12 +204,12 @@ func buildRequest(wavData []byte) (*http.Request, error) {
 	if err := w.WriteField("temperature", "0"); err != nil {
 		return nil, err
 	}
-	if lang := strings.TrimSpace(os.Getenv("GROQ_STT_LANGUAGE")); lang != "" {
+	if lang := groqLanguage(); lang != "" {
 		if err := w.WriteField("language", lang); err != nil {
 			return nil, err
 		}
 	}
-	if prompt := strings.TrimSpace(os.Getenv("GROQ_STT_PROMPT")); prompt != "" {
+	if prompt := groqPrompt(); prompt != "" {
 		if err := w.WriteField("prompt", prompt); err != nil {
 			return nil, err
 		}
@@ -204,7 +232,7 @@ func buildRequest(wavData []byte) (*http.Request, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(os.Getenv("GROQ_API_KEY")))
+	req.Header.Set("Authorization", "Bearer "+groqAPIKey())
 	return req, nil
 }
 
@@ -307,6 +335,10 @@ func STT(req sr.SpeechRequest) (string, error) {
 	text, err := transcribe(wavData)
 	if err != nil {
 		logger.Println("[groq-stt] " + err.Error())
+		if vars.ActiveLocalSTTService() == voskstt.Name {
+			logger.Println("[groq-stt] falling back to local Vosk model")
+			return voskstt.TranscribeDecodedPCM(req.Device, req.DecodedMicData, req.IsKG)
+		}
 		return "", err
 	}
 

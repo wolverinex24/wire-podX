@@ -12,6 +12,14 @@ The installation guide exists on the wiki: [Installation guide](https://github.c
 
 Check out the [wiki](https://github.com/kercre123/wire-pod/wiki) for more information on what wire-pod is, a guide on how to install wire-pod, troubleshooting, how to develop for it, and for some generally helpful tips.
 
+## macOS Native STT Build
+
+For native macOS builds that use Vosk fallback, the scripts expect the Vosk SDK at `$HOME/.vosk/libvosk` with `vosk_api.h` and `libvosk.dylib` inside it.
+
+For Whisper.cpp builds, the scripts expect a repo-local checkout at `./whisper.cpp`, built with CMake into `./whisper.cpp/build_go`. The Go build uses headers from `./whisper.cpp`, `./whisper.cpp/include`, and `./whisper.cpp/ggml/include`, and libraries from `./whisper.cpp/build_go/src`, `./whisper.cpp/build_go/ggml/src`, `./whisper.cpp/build_go/ggml/src/ggml-blas`, and `./whisper.cpp/build_go/ggml/src/ggml-metal`.
+
+`setup.sh` and `update.sh` now export these macOS CGO paths automatically for Groq, Vosk, and Whisper.cpp builds.
+
 ## Donate
 
 If you want to :P

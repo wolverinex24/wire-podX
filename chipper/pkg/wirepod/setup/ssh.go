@@ -28,6 +28,7 @@ var SSHSettingUp bool = false
 func doErr(err error, msg string) error {
 	SSHSettingUp = false
 	SetupSSHStatus = "not running (last error: " + err.Error() + ", last step: " + msg + ")"
+	logger.Println("SSH Setup Error: " + err.Error() + " (step: " + msg + ")")
 	return err
 }
 
@@ -55,12 +56,13 @@ func SetupBotViaSSH(ip string, key []byte) error {
 		SetupScriptPath = "./pod-bot-install.sh"
 	}
 	if !SSHSettingUp {
+		SSHSettingUp = true
 		logger.Println("Setting up " + ip + " via SSH")
 		SetupSSHStatus = "Setting up SSH connection..."
 		CreateServerConfig()
 		signer, err := ssh.ParsePrivateKey(key)
 		if err != nil {
-			doErr(err, "parsing priv key")
+			return doErr(err, "parsing priv key")
 		}
 		config := &ssh.ClientConfig{
 			User: "root",
@@ -213,6 +215,8 @@ func SetupBotViaSSH(ip string, key []byte) error {
 		setCPURAMfreq(client, "733333", "500000", "interactive")
 		client.Close()
 		SetupSSHStatus = "done"
+		SSHSettingUp = false
+		logger.Println("SSH setup successfully completed!")
 	} else {
 		return fmt.Errorf("a bot is already being setup")
 	}

@@ -242,6 +242,46 @@ function updateWeatherAPI() {
     });
 }
 
+function isLocalSTTProvider(provider) {
+  return provider === "vosk" || provider === "whisper.cpp";
+}
+
+function populateSTTConfig(parsed) {
+  const groqEnabled = parsed.provider === "groq";
+  getE("groqConfigDiv").style.display = groqEnabled ? "block" : "none";
+  if (groqEnabled) {
+    getE("groqApiKey").value = parsed.groq?.api_key || "";
+    getE("groqModel").value = parsed.groq?.model || "";
+    getE("groqLanguage").value = parsed.groq?.language || "";
+    getE("groqPrompt").value = parsed.groq?.prompt || "";
+    getE("groqEndpoint").value = parsed.groq?.endpoint || "";
+  }
+
+  if (isLocalSTTProvider(parsed.provider) || groqEnabled) {
+    getE("languageSelectionDiv").style.display = "block";
+    getE("languageSelection").value = parsed.language || "en-US";
+    if (!groqEnabled) {
+      displayMessage("languageStatus", "");
+    }
+  } else {
+    getE("languageSelectionDiv").style.display = "none";
+    displayError("languageStatus", `The current STT provider '${parsed.provider}' is not configurable from this page.`);
+  }
+}
+
+function currentSTTData() {
+  return {
+    language: getE("languageSelection").value,
+    groq: {
+      api_key: getE("groqApiKey") ? getE("groqApiKey").value : "",
+      model: getE("groqModel") ? getE("groqModel").value : "",
+      language: getE("groqLanguage") ? getE("groqLanguage").value : "",
+      prompt: getE("groqPrompt") ? getE("groqPrompt").value : "",
+      endpoint: getE("groqEndpoint") ? getE("groqEndpoint").value : "",
+    },
+  };
+}
+
 function checkKG() {
   const provider = getE("kgProvider").value;
   const elements = [
@@ -391,7 +431,7 @@ function updateKGAPI() {
 }
 
 function setSTTLanguage() {
-  const data = { language: getE("languageSelection").value };
+  const data = currentSTTData();
 
   displayMessage("languageStatus", "Setting...");
 
@@ -577,13 +617,7 @@ function showLanguage() {
   fetch("/api/get_stt_info")
     .then((response) => response.json())
     .then((parsed) => {
-      if (parsed.provider !== "vosk" && parsed.provider !== "whisper.cpp") {
-        displayError("languageStatus", `To set the STT language, the provider must be Vosk or Whisper. The current one is '${parsed.sttProvider}'.`);
-        getE("languageSelectionDiv").style.display = "none";
-      } else {
-        getE("languageSelectionDiv").style.display = "block";
-        getE("languageSelection").value = parsed.language;
-      }
+      populateSTTConfig(parsed);
     });
 }
 

@@ -231,7 +231,7 @@ func Init() {
 	ReadConfig()
 
 	// check models folder, add all models to DownloadedVoskModels
-	if APIConfig.STT.Service == "vosk" {
+	if UsesVoskFallback() {
 		GetDownloadedVoskModels()
 	}
 

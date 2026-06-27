@@ -252,7 +252,7 @@ func GetText(key string) string {
 }
 
 func ReloadVosk() {
-	if vars.APIConfig.STT.Service == "vosk" || vars.APIConfig.STT.Service == "whisper.cpp" {
+	if vars.UsesLocalSTTLanguage() {
 		vars.IntentList, _ = vars.LoadIntents()
 		vars.SttInitFunc()
 	}

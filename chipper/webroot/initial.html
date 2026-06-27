@@ -49,10 +49,25 @@
         </div>
 
         <div id="section-language" style="display: none">
-          <h3>Speech-to-Text Language</h3>
+          <h3>Speech-to-Text Setup</h3>
           <hr class="small-hr">
           <div class="center" id="languageStatus"></div>
+          <div id="groqConfigDiv" style="display: none">
+            <label for="groqApiKey">Groq API Key:</label>
+            <input type="text" name="groqApiKey" id="groqApiKey" /><br />
+            <label for="groqModel">Groq Model <small class="desc">(optional)</small>:</label>
+            <input type="text" name="groqModel" id="groqModel" placeholder="whisper-large-v3" /><br />
+            <label for="groqLanguage">Groq Language <small class="desc">(optional ISO-639-1 code)</small>:</label>
+            <input type="text" name="groqLanguage" id="groqLanguage" placeholder="auto-detect" /><br />
+            <label for="groqPrompt">Groq Prompt <small class="desc">(optional)</small>:</label>
+            <input type="text" name="groqPrompt" id="groqPrompt" /><br />
+            <label for="groqEndpoint">Groq Endpoint <small class="desc">(optional override)</small>:</label>
+            <input type="text" name="groqEndpoint" id="groqEndpoint" placeholder="https://api.groq.com/openai/v1/audio/transcriptions" /><br />
+            <small class="desc">Fallback on-device model: Vosk.</small>
+            <hr class="small-hr">
+          </div>
           <div id="languageSelectionDiv">
+            <label for="languageSelection">On-device fallback language:</label>
             <select name="languageSelection" id="languageSelection">
               <option value="en-US">English (US)</option>
               <option value="it-IT">Italian (IT)</option>

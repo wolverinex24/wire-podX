@@ -221,3 +221,33 @@ func STT(req sr.SpeechRequest) (string, error) {
 	logger.Println("Bot " + req.Device + " Transcribed text: " + transcribedText)
 	return transcribedText, nil
 }
+
+func TranscribeDecodedPCM(device string, decodedPCM []byte, isKG bool) (string, error) {
+	var withGrm bool
+	if (vars.APIConfig.Knowledge.IntentGraph || isKG) || !GrammerEnable {
+		logger.Println("Using general recognizer")
+		withGrm = false
+	} else {
+		logger.Println("Using grammer-optimized recognizer")
+		withGrm = true
+	}
+	chunks := sr.SplitVAD(decodedPCM)
+	if len(chunks) == 0 {
+		return "", nil
+	}
+	rec, recind := getRec(withGrm)
+	rec.SetWords(1)
+	for _, chunk := range chunks {
+		rec.AcceptWaveform(chunk)
+	}
+	var jres map[string]interface{}
+	json.Unmarshal([]byte(rec.FinalResult()), &jres)
+	if withGrm {
+		grmRecs[recind].InUse = false
+	} else {
+		gpRecs[recind].InUse = false
+	}
+	transcribedText := jres["text"].(string)
+	logger.Println("Bot " + device + " Transcribed text: " + transcribedText)
+	return transcribedText, nil
+}

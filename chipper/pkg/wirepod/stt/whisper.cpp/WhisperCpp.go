@@ -2,6 +2,7 @@ package wirepod_whispercpp
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -12,12 +13,51 @@ import (
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	sr "github.com/kercre123/wire-pod/chipper/pkg/wirepod/speechrequest"
+	voskstt "github.com/kercre123/wire-pod/chipper/pkg/wirepod/stt/vosk"
 )
 
 var Name string = "whisper.cpp"
 
 var context *whisper.Context
 var params whisper.Params
+var whisperReady bool
+
+func initWhisper() error {
+	whisperReady = false
+	whispModel := os.Getenv("WHISPER_MODEL")
+	if whispModel == "" {
+		logger.Println("WHISPER_MODEL not defined, assuming tiny")
+		whispModel = "tiny"
+	} else {
+		whispModel = strings.TrimSpace(whispModel)
+	}
+	var sttLanguage string
+	if len(vars.APIConfig.STT.Language) == 0 {
+		sttLanguage = "en"
+	} else {
+		sttLanguage = strings.Split(vars.APIConfig.STT.Language, "-")[0]
+	}
+
+	modelPath := filepath.Join(vars.WhisperModelPath, "ggml-"+whispModel+".bin")
+	if _, err := os.Stat(modelPath); err != nil {
+		logger.Println("Model does not exist: " + modelPath)
+		return err
+	}
+	logger.Println("Opening Whisper model (" + modelPath + ")")
+	context = whisper.Whisper_init(modelPath)
+	params = context.Whisper_full_default_params(whisper.SamplingStrategy(whisper.SAMPLING_GREEDY))
+	params.SetTranslate(false)
+	params.SetPrintSpecial(false)
+	params.SetPrintProgress(false)
+	params.SetPrintRealtime(false)
+	params.SetPrintTimestamps(false)
+	params.SetThreads(runtime.NumCPU())
+	params.SetNoContext(true)
+	params.SetSingleSegment(true)
+	params.SetLanguage(context.Whisper_lang_id(sttLanguage))
+	whisperReady = true
+	return nil
+}
 
 func padPCM(data []byte) []byte {
 	const sampleRate = 16000
@@ -40,39 +80,21 @@ func padPCM(data []byte) []byte {
 }
 
 func Init() error {
-	whispModel := os.Getenv("WHISPER_MODEL")
-	if whispModel == "" {
-		logger.Println("WHISPER_MODEL not defined, assuming tiny")
-		whispModel = "tiny"
-	} else {
-		whispModel = strings.TrimSpace(whispModel)
+	primaryErr := initWhisper()
+	if primaryErr != nil {
+		logger.Println("[whisper-stt] primary init failed: " + primaryErr.Error())
 	}
-	var sttLanguage string
-	if len(vars.APIConfig.STT.Language) == 0 {
-		sttLanguage = "en"
-	} else {
-		sttLanguage = strings.Split(vars.APIConfig.STT.Language, "-")[0]
+	if vars.UsesVoskFallback() {
+		if err := voskstt.Init(); err != nil {
+			logger.Println("[whisper-stt] Vosk fallback init failed: " + err.Error())
+			if primaryErr != nil {
+				return fmt.Errorf("whisper init failed: %w", primaryErr)
+			}
+		} else {
+			logger.Println("[whisper-stt] initialized local fallback: vosk")
+		}
 	}
-
-	modelPath := filepath.Join(vars.WhisperModelPath, "ggml-"+whispModel+".bin")
-	if _, err := os.Stat(modelPath); err != nil {
-		logger.Println("Model does not exist: " + modelPath)
-		return err
-	}
-	logger.Println("Opening Whisper model (" + modelPath + ")")
-	//logger.Println(whisper.Whisper_print_system_info())
-	context = whisper.Whisper_init(modelPath)
-	params = context.Whisper_full_default_params(whisper.SamplingStrategy(whisper.SAMPLING_GREEDY))
-	params.SetTranslate(false)
-	params.SetPrintSpecial(false)
-	params.SetPrintProgress(false)
-	params.SetPrintRealtime(false)
-	params.SetPrintTimestamps(false)
-	params.SetThreads(runtime.NumCPU())
-	params.SetNoContext(true)
-	params.SetSingleSegment(true)
-	params.SetLanguage(context.Whisper_lang_id(sttLanguage))
-	return nil
+	return primaryErr
 }
 
 func STT(req sr.SpeechRequest) (string, error) {
@@ -90,9 +112,14 @@ func STT(req sr.SpeechRequest) (string, error) {
 			break
 		}
 	}
+	if !whisperReady {
+		logger.Println("[whisper-stt] primary model unavailable, falling back to local Vosk")
+		return voskstt.TranscribeDecodedPCM(req.Device, req.DecodedMicData, req.IsKG)
+	}
 	transcribedText, err := process(BytesToFloat32Buffer(padPCM(req.DecodedMicData)))
 	if err != nil {
-		return "", err
+		logger.Println("[whisper-stt] " + err.Error())
+		return voskstt.TranscribeDecodedPCM(req.Device, req.DecodedMicData, req.IsKG)
 	}
 	transcribedText = strings.ToLower(transcribedText)
 	logger.Println("Bot " + req.Device + " Transcribed text: " + transcribedText)
