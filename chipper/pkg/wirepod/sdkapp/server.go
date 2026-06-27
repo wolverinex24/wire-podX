@@ -25,7 +25,7 @@ import (
 var serverFiles string = "./webroot/sdkapp"
 
 func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
-	robotObj, robotIndex, err := getRobot(r.FormValue("serial"))
+	robotObj, robotIndex, err := GetRobot(r.FormValue("serial"))
 	robot := robotObj.Vector
 	ctx := robotObj.Ctx
 	if r.URL.Path != "/api-sdk/get_sdk_info" && r.URL.Path != "/api-sdk/debug" {
@@ -546,7 +546,7 @@ func SdkapiHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func camStreamHandler(w http.ResponseWriter, r *http.Request) {
-	robotObj, robotIndex, err := getRobot(r.FormValue("serial"))
+	robotObj, robotIndex, err := GetRobot(r.FormValue("serial"))
 	if err != nil {
 		fmt.Fprint(w, "error: "+err.Error())
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -110,7 +111,7 @@ func newRobot(serial string) (Robot, int, error) {
 	return RobotObj, robotIndex, nil
 }
 
-func getRobot(serial string) (Robot, int, error) {
+func GetRobot(serial string) (Robot, int, error) {
 	// look in robot list
 	for {
 		if !inhibitCreation {
@@ -232,4 +233,24 @@ func NewWP(serial string, useGlobal bool) (*vector.Vector, error) {
 		vector.WithSerialNo(serial),
 		vector.WithToken(guid),
 	)
+}
+
+func init() {
+	StartWifiKeepAlive()
+}
+
+func StartWifiKeepAlive() {
+	go func() {
+		for {
+			time.Sleep(10 * time.Second)
+			for _, robot := range vars.BotInfo.Robots {
+				if robot.IPAddress != "" {
+					conn, err := net.DialTimeout("tcp", robot.IPAddress+":443", 2*time.Second)
+					if err == nil {
+						conn.Close()
+					}
+				}
+			}
+		}
+	}()
 }

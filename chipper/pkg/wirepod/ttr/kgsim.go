@@ -21,6 +21,7 @@ import (
 	"github.com/fforchino/vector-go-sdk/pkg/vectorpb"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
+	sdkWeb "github.com/kercre123/wire-pod/chipper/pkg/wirepod/sdkapp"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -196,29 +197,12 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 	kgReadyToAnswer := make(chan bool, 1)
 	kgStopLooping := false
 	ctx := context.Background()
-	matched := false
-	var robot *vector.Vector
-	var guid string
-	var target string
-	for _, bot := range vars.BotInfo.Robots {
-		if esn == bot.Esn {
-			guid = bot.GUID
-			target = bot.IPAddress + ":443"
-			matched = true
-			break
-		}
-	}
-	if matched {
-		var err error
-		robot, err = vector.New(vector.WithSerialNo(esn), vector.WithToken(guid), vector.WithTarget(target))
-		if err != nil {
-			return err.Error(), err
-		}
-	}
-	_, err := robot.Conn.BatteryState(context.Background(), &vectorpb.BatteryStateRequest{})
+	robotObj, _, err := sdkWeb.GetRobot(esn)
 	if err != nil {
 		return "", err
 	}
+	robot := robotObj.Vector
+	ctx = robotObj.Ctx
 	if isKG {
 		BControl(robot, ctx, start, stop)
 		go func() {
