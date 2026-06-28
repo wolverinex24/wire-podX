@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -54,8 +52,6 @@ func PostmDNSNow() {
 	}
 }
 
-var MacDNScmd *exec.Cmd
-
 func PostmDNS() {
 	if os.Getenv("DISABLE_MDNS") == "true" {
 		fmt.Println("mDNS is disabled")
@@ -63,18 +59,6 @@ func PostmDNS() {
 	}
 	if PostingmDNS {
 		return
-	}
-	if runtime.GOOS == "darwin" {
-		ipAddr := vars.GetOutboundIP().String()
-		logger.Println("macOS detected: Registering escapepod.local using native dns-sd on IP " + ipAddr)
-		exec.Command("pkill", "-f", "dns-sd -P escapepod").Run()
-		MacDNScmd = exec.Command("dns-sd", "-P", "escapepod", "_http._tcp", "local", "8084", "escapepod.local", ipAddr)
-		err := MacDNScmd.Start()
-		if err != nil {
-			logger.Println("Failed to start native macOS mDNS resolver (dns-sd):", err)
-		} else {
-			logger.Println("Started native macOS mDNS resolver (dns-sd) on " + ipAddr)
-		}
 	}
 	go PostmDNSWhenNewVector()
 	MDNSNow = make(chan bool)

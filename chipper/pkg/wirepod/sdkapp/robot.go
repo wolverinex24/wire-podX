@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/fforchino/vector-go-sdk/pkg/vectorpb"
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
+	"golang.org/x/crypto/ssh"
 )
 
 var robots []Robot
@@ -235,8 +239,83 @@ func NewWP(serial string, useGlobal bool) (*vector.Vector, error) {
 	)
 }
 
+func getRealHomeDir() string {
+	sudoUser := os.Getenv("SUDO_USER")
+	if sudoUser != "" {
+		if u, err := user.Lookup(sudoUser); err == nil {
+			return u.HomeDir
+		}
+	}
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	return "/root"
+}
+
+func SyncVectorHosts() {
+	go func() {
+		// Wait 5 seconds to let the server start and retrieve outbound IP
+		time.Sleep(5 * time.Second)
+
+		home := getRealHomeDir()
+		keyPath := filepath.Join(home, "Downloads", "ssh_root_key")
+		keyBytes, err := os.ReadFile(keyPath)
+		if err != nil {
+			logger.Println("Self-healing: SSH root key not found at " + keyPath + ", skipping hosts sync")
+			return
+		}
+
+		signer, err := ssh.ParsePrivateKey(keyBytes)
+		if err != nil {
+			logger.Println("Self-healing: Failed to parse SSH key: " + err.Error())
+			return
+		}
+
+		config := &ssh.ClientConfig{
+			User: "root",
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(signer),
+			},
+			HostKeyCallback:   ssh.InsecureIgnoreHostKey(),
+			HostKeyAlgorithms: []string{"ssh-rsa", "ecdsa-sha2-nistp256"},
+			Timeout:           5 * time.Second,
+		}
+
+		macIP := vars.GetOutboundIP().String()
+
+		for _, robot := range vars.BotInfo.Robots {
+			if robot.IPAddress == "" {
+				continue
+			}
+			logger.Println("Self-healing: Attempting to sync escapepod.local IP on Vector " + robot.Esn + " (" + robot.IPAddress + ")")
+			client, err := ssh.Dial("tcp", robot.IPAddress+":22", config)
+			if err != nil {
+				logger.Println("Self-healing: Failed to connect to Vector via SSH: " + err.Error())
+				continue
+			}
+
+			session, err := client.NewSession()
+			if err != nil {
+				client.Close()
+				continue
+			}
+
+			cmd := fmt.Sprintf("mount -o rw,remount / && sed -i '/escapepod.local/d' /etc/hosts && echo '%s escapepod.local' >> /etc/hosts", macIP)
+			err = session.Run(cmd)
+			if err != nil {
+				logger.Println("Self-healing: Failed to update hosts file on Vector: " + err.Error())
+			} else {
+				logger.Println("Self-healing: Successfully updated escapepod.local IP to " + macIP + " on Vector " + robot.Esn)
+			}
+			session.Close()
+			client.Close()
+		}
+	}()
+}
+
 func init() {
 	StartWifiKeepAlive()
+	SyncVectorHosts()
 }
 
 func StartWifiKeepAlive() {
