@@ -79,7 +79,9 @@ func newRobot(serial string) (Robot, int, error) {
 	}
 
 	// connection check
-	_, err = RobotObj.Vector.Conn.BatteryState(context.Background(), &vectorpb.BatteryStateRequest{})
+	ctxCheck, cancelCheck := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err = RobotObj.Vector.Conn.BatteryState(ctxCheck, &vectorpb.BatteryStateRequest{})
+	cancelCheck()
 	if err != nil {
 		inhibitCreation = false
 		return RobotObj, 0, err
@@ -125,7 +127,9 @@ func GetRobot(serial string) (Robot, int, error) {
 	}
 	for index, robot := range robots {
 		if strings.EqualFold(serial, robot.ESN) {
-			_, err := robot.Vector.Conn.BatteryState(context.Background(), &vectorpb.BatteryStateRequest{})
+			ctxCheck, cancelCheck := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := robot.Vector.Conn.BatteryState(ctxCheck, &vectorpb.BatteryStateRequest{})
+			cancelCheck()
 			if err == nil {
 				return robot, index, nil
 			}

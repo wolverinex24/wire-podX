@@ -198,12 +198,16 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 	kgStopLooping := false
 	ctx := context.Background()
 	robotObj, _, err := sdkWeb.GetRobot(esn)
+	var useSDK bool = true
+	var robot *vector.Vector
 	if err != nil {
-		return "", err
+		logger.Println("Vector SDK connection failed: " + err.Error() + ". Falling back to direct stateless LLM call.")
+		useSDK = false
+	} else {
+		robot = robotObj.Vector
+		ctx = robotObj.Ctx
 	}
-	robot := robotObj.Vector
-	ctx = robotObj.Ctx
-	if isKG {
+	if isKG && useSDK {
 		BControl(robot, ctx, start, stop)
 		go func() {
 			for {
@@ -360,6 +364,27 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 		return responseText, nil
 	}
 
+	if !useSDK {
+		// Non-SDK stateless LLM request
+		aireq := CreateAIReq(transcribedText, esn, false, isKG)
+		aireq.Stream = false
+		cConf := openai.DefaultConfig(vars.APIConfig.Knowledge.Key)
+		cConf.BaseURL = CleanEndpoint(vars.APIConfig.Knowledge.Endpoint)
+		cClient := openai.NewClientWithConfig(cConf)
+		
+		resp, err := cClient.CreateChatCompletion(ctx, aireq)
+		if err != nil {
+			logger.Println("Stateless LLM error: " + err.Error())
+			return "", err
+		}
+		if len(resp.Choices) > 0 {
+			responseText := removeSpecialCharacters(resp.Choices[0].Message.Content)
+			logger.Println("Stateless LLM response: " + responseText)
+			return responseText, nil
+		}
+		return "", fmt.Errorf("empty choices from LLM")
+	}
+
 	speakReady := make(chan string)
 	successIntent := make(chan bool)
 
@@ -475,7 +500,7 @@ func StreamingKGSim(req interface{}, esn string, transcribedText string, isKG bo
 				}
 				splitResp := strings.Split(strings.TrimSpace(fullRespText), sepStr)
 				fullRespSlice = append(fullRespSlice, strings.TrimSpace(splitResp[0])+sepStr)
-				fullRespText = splitResp[1]
+				fullRespText = strings.Join(splitResp[1:], sepStr)
 				select {
 				case successIntent <- true:
 				default:

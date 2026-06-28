@@ -9,6 +9,7 @@ import (
 	"github.com/kercre123/wire-pod/chipper/pkg/logger"
 	"github.com/kercre123/wire-pod/chipper/pkg/vars"
 	"github.com/kercre123/wire-pod/chipper/pkg/vtt"
+	sdkWeb "github.com/kercre123/wire-pod/chipper/pkg/wirepod/sdkapp"
 	sr "github.com/kercre123/wire-pod/chipper/pkg/wirepod/speechrequest"
 	ttr "github.com/kercre123/wire-pod/chipper/pkg/wirepod/ttr"
 	"github.com/pkg/errors"
@@ -68,21 +69,42 @@ func houndifyKG(req sr.SpeechRequest) string {
 }
 
 func streamingKG(req *vtt.KnowledgeGraphRequest, speechReq sr.SpeechRequest) string {
-	// have him start "thinking" right after the text is transcribed
 	transcribedText, err := sttHandler(speechReq)
 	if err != nil {
 		return "There was an error."
 	}
-	kg := pb.KnowledgeGraphResponse{
-		Session:     req.Session,
-		DeviceId:    req.Device,
-		CommandType: NoResult,
-		SpokenText:  "bla bla bla bla bla bla bla bla bla bla",
-	}
-	req.Stream.Send(&kg)
-	_, err = ttr.StreamingKGSim(req, req.Device, transcribedText, true)
-	if err != nil {
-		logger.Println("LLM error: " + err.Error())
+	
+	// Check if SDK connection is available
+	_, _, sdkErr := sdkWeb.GetRobot(req.Device)
+	
+	if sdkErr == nil {
+		// SDK is available - do the standard streaming with animations
+		kg := pb.KnowledgeGraphResponse{
+			Session:     req.Session,
+			DeviceId:    req.Device,
+			CommandType: NoResult,
+			SpokenText:  "bla bla bla bla bla bla bla bla bla bla",
+		}
+		req.Stream.Send(&kg)
+		_, err = ttr.StreamingKGSim(req, req.Device, transcribedText, true)
+		if err != nil {
+			logger.Println("LLM error: " + err.Error())
+		}
+	} else {
+		// SDK is offline - fallback to standard native TTS response (no dummy bla bla)
+		logger.Println("Vector SDK is unreachable, using native stateless fallback.")
+		respText, err := ttr.StreamingKGSim(req, req.Device, transcribedText, true)
+		if err != nil {
+			logger.Println("LLM error: " + err.Error())
+			respText = "There was an error getting a response from the L L M."
+		}
+		kg := pb.KnowledgeGraphResponse{
+			Session:     req.Session,
+			DeviceId:    req.Device,
+			CommandType: NoResult,
+			SpokenText:  respText,
+		}
+		req.Stream.Send(&kg)
 	}
 	logger.Println("(KG) Bot " + speechReq.Device + " request served.")
 	return ""

@@ -199,6 +199,9 @@ func GetActionsFromString(input string) []RobotAction {
 		}
 
 		cmdPlusParam := strings.Split(strings.TrimSpace(strings.Split(spl, "}}")[0]), "||")
+		if len(cmdPlusParam) < 2 {
+			continue
+		}
 		cmd := strings.TrimSpace(cmdPlusParam[0])
 		param := strings.TrimSpace(cmdPlusParam[1])
 		action := CmdParamToAction(cmd, param)
@@ -529,6 +532,10 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 		for {
 			response, err := stream.Recv()
 			if errors.Is(err, io.EOF) {
+				if len(fullRespSlice) == 0 {
+					logger.Println("LLM returned no response")
+					break
+				}
 				isDone = true
 				newStr := fullRespSlice[0]
 				for i, str := range fullRespSlice {
@@ -578,7 +585,7 @@ func DoGetImage(msgs []openai.ChatCompletionMessage, param string, robot *vector
 				}
 				splitResp := strings.Split(strings.TrimSpace(fullRespText), sepStr)
 				fullRespSlice = append(fullRespSlice, strings.TrimSpace(splitResp[0])+sepStr)
-				fullRespText = splitResp[1]
+				fullRespText = strings.Join(splitResp[1:], sepStr)
 				select {
 				case speakReady <- strings.TrimSpace(splitResp[0]) + sepStr:
 				default:

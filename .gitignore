@@ -45,3 +45,13 @@ chipper/source.sh
 chipper/pico.key
 chipper/chipper
 chipper/main
+
+# STT & Dependency Binaries
+/chipper/groq
+/chipper/whisper.cpp
+/vosk-api-go/
+
+# Proxy Environment & Credentials
+/wirepod-agent-proxy/venv/
+/wirepod-agent-proxy/config.json
+/wirepod-agent-proxy/__pycache__/

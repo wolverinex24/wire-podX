@@ -1,0 +1,18 @@
+{
+  "llm": {
+    "base_url": "http://YOUR_LLM_HOST_IP:1234/v1",
+    "api_key": "YOUR_LLM_API_KEY_HERE",
+    "model": "qwen/qwen3.5-9b"
+  },
+  "wirepod": {
+    "base_url": "http://YOUR_WIrepod_HOST_IP:8080",
+    "default_esn": "YOUR_ROBOT_ESN_HERE"
+  },
+  "mcp_servers": [
+    {
+      "name": "ddg-search",
+      "command": "./venv/bin/duckduckgo-mcp-server",
+      "args": []
+    }
+  ]
+}
