@@ -16,10 +16,46 @@ import openai
 def fix_commands(text: str) -> str:
     if not text:
         return text
-    # Matches commands like playAnimationWI thinking, playAnimationWI||thinking, or {{playAnimationWI sad}}
-    # and outputs exactly {{command||parameter}}
-    pattern = r'\{*\{*\b(playAnimationWI|playAnimation|getImage|newVoiceRequest|playSound)(?:\s+|\|\|?)\b(happy|veryHappy|sad|verySad|angry|frustrated|dartingEyes|confused|thinking|celebrate|love|front|lookingUp|now)\b\}*\}*'
-    return re.sub(pattern, r'{{\1||\2}}', text)
+    
+    def repl(match):
+        cmd = match.group(1) or match.group(3)
+        param = match.group(2) or match.group(4)
+        
+        # Clean parameter: strip quotes, spaces, braces
+        param = param.strip('"\'[]{}() ')
+        
+        # Validate parameter against allowed presets to prevent bad robot actions
+        valid_anims = {"happy", "veryHappy", "sad", "verySad", "angry", "frustrated", "dartingEyes", "confused", "thinking", "celebrate", "love"}
+        valid_getimage = {"front", "lookingUp"}
+        valid_voicereq = {"now"}
+        
+        # Map parameters to valid fallbacks if invalid
+        if cmd in ("playAnimationWI", "playAnimation"):
+            if param not in valid_anims:
+                if "hot" in param.lower():
+                    param = "frustrated"
+                elif "happy" in param.lower():
+                    param = "happy"
+                elif "sad" in param.lower():
+                    param = "sad"
+                else:
+                    param = "thinking" # default fallback
+        elif cmd == "getImage":
+            if param not in valid_getimage:
+                param = "front"
+        elif cmd == "newVoiceRequest":
+            if param not in valid_voicereq:
+                param = "now"
+                
+        return f"{{{{{cmd}||{param}}}}}"
+
+    # Match raw commands or commands with quotes/brackets safely
+    pattern = re.compile(
+        r'\{\{\s*(playAnimationWI|playAnimation|getImage|newVoiceRequest)\s*(?:\|\||\||\s+)\s*([^\}]+?)\s*\}\}'
+        r'|'
+        r'\b(playAnimationWI|playAnimation|getImage|newVoiceRequest)\s*(?:\|\||\||\s+)\s*["\'\[\(]?([a-zA-Z0-9_-]+)["\'\]\)]?'
+    )
+    return pattern.sub(repl, text)
 
 # Load config
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
@@ -292,6 +328,9 @@ async def chat_completions(req: Dict[str, Any], authorization: Optional[str] = H
     # Merge MCP Tools
     for client in mcp_clients:
         for tool in client.tools:
+            # Hide fetch_content from the LLM catalog since the proxy runs it automatically
+            if tool["name"] == "fetch_content":
+                continue
             # Replace hyphens with underscores for local LLM tokenizers
             tool_name = f"mcp_{client.name}_{tool['name']}".replace("-", "_")
             tools_catalog.append({
@@ -307,6 +346,19 @@ async def chat_completions(req: Dict[str, Any], authorization: Optional[str] = H
     openai_client = openai.AsyncOpenAI(
         base_url=config["llm"]["base_url"],
         api_key=config["llm"]["api_key"]
+    )
+
+    # Build plain text instructions describing the tools catalog
+    tools_instruction = "\n\nAvailable tools:\n"
+    for tool in tools_catalog:
+        tools_instruction += f"- Tool Name: {tool['function']['name']}\n"
+        tools_instruction += f"  Description: {tool['function']['description']}\n"
+        tools_instruction += f"  Parameters (JSON Schema): {json.dumps(tool['function']['parameters'])}\n\n"
+        
+    tools_instruction += (
+        "To execute a tool call, you MUST output the call exactly using this format in your response: \n"
+        "<function=TOOL_NAME>{\"parameter_name\": \"value\"}</function>\n"
+        "Do not output anything else in the message when you want to call a tool."
     )
 
     current_messages = []
@@ -327,8 +379,8 @@ async def chat_completions(req: Dict[str, Any], authorization: Optional[str] = H
         if current_turn:
             turns.append(current_turn)
             
-        # Keep only the last 2 turns to ensure context is clean, fast, and template-compatible
-        turns_limit = 2
+        # Keep only the last 1 turn to ensure context is clean, fast, and template-compatible
+        turns_limit = 1
         if len(turns) > turns_limit:
             turns = turns[-turns_limit:]
             
@@ -341,13 +393,13 @@ async def chat_completions(req: Dict[str, Any], authorization: Optional[str] = H
         system_content = current_messages[0].get("content", "") or ""
         instruction = (
             "\n\nCRITICAL TOOL USE & STYLE INSTRUCTIONS:\n"
-            "- You have access to native tools for web search, webpage fetching, and robot control. These are defined in your tool definitions (do NOT try to write them as {{command||parameter}} text commands).\n"
+            "- You have access to tools for web search and robot control. Do NOT try to write them as {{command||parameter}} text commands.\n"
             "- If the user asks about any real-time info (like weather, news, current events, search), you MUST immediately trigger the search tool call on your first turn. Do not write conversational filler saying you will check; call the tool!\n"
-            "- If the search results only contain generic titles/homepages without specific news text, you MUST call the webpage fetching tool to read the actual page content from the most relevant URL. Do not say you are fetching it in text—actually call the tool on Turn 2!\n"
             "- If the user asks you to change color, volume, play an animation, or check battery, you MUST call the corresponding native tool immediately.\n"
-            "- Keep your response extremely short, direct, and conversational (under 2 sentences). Summarize key info and do not say URLs, citations, or list details.\n"
-            "- Do NOT use the getImage command unless the user explicitly requests you to take a photo, look at something, or ask what you see."
+            "- Summarize search or weather details clearly and informatively. Keep it concise (2-3 sentences), direct, and conversational. Do NOT speak URLs or citations, but do include key highlights (like temperatures, conditions, news details) so the user gets a high-quality answer.\n"
+            "- Do NOT use the getImage command unless the user explicitly requests you to take a photo, look at something, or ask what you see.\n\n"
         )
+        instruction += tools_instruction
         if "CRITICAL TOOL USE & STYLE INSTRUCTIONS" not in system_content:
             current_messages[0]["content"] = system_content + instruction
 
@@ -355,15 +407,152 @@ async def chat_completions(req: Dict[str, Any], authorization: Optional[str] = H
     for step in range(5):
 
 
-        # Call the LLM non-streaming first to handle potential tool calls
+        # Call the LLM non-streaming first to handle potential tool calls.
+        # We completely omit the "tools" and "tool_choice" parameters to prevent Groq API server validation errors.
         response = await openai_client.chat.completions.create(
             model=config["llm"]["model"],
-            messages=current_messages,
-            tools=tools_catalog if tools_catalog else None,
-            tool_choice="auto" if tools_catalog else None
+            messages=current_messages
         )
 
         message = response.choices[0].message
+        print(f"DEBUG: message content: {repr(message.content)}")
+        print(f"DEBUG: message tool_calls: {repr(message.tool_calls)}")
+        print(f"DEBUG: '<function=' in content? {'<function=' in (message.content or '')}")
+
+        # Text-based function call fallback (e.g. Llama 3.1 or local LLMs outputting tags/braces in text)
+        if not message.tool_calls and message.content:
+            mock_tc = None
+            intro_text = message.content
+            
+            # Form 1: Tag-based <function=tool_name>JSON</function>
+            if "<function=" in message.content:
+                match = re.search(r'<function=(\w+)>(.*?)(?:</function>|<function>|$)', message.content, re.DOTALL)
+                if match:
+                    tool_name = match.group(1)
+                    tool_args_str = match.group(2).strip()
+                    intro_text = message.content[:match.start()].strip()
+                    
+                    # Parse JSON arguments robustly
+                    args_dict = {}
+                    try:
+                        args_dict = json.loads(tool_args_str)
+                    except json.JSONDecodeError:
+                        try:
+                            import ast
+                            args_dict = ast.literal_eval(tool_args_str)
+                        except Exception:
+                            try:
+                                args_dict = json.loads(tool_args_str.replace("'", '"'))
+                            except Exception:
+                                pass
+                    
+                    if "max_results" in args_dict:
+                        try:
+                            args_dict["max_results"] = int(args_dict["max_results"])
+                        except Exception:
+                            pass
+                    
+                    class MockFunction:
+                        def __init__(self, name, arguments):
+                            self.name = name
+                            self.arguments = arguments
+                    class MockToolCall:
+                        def __init__(self, id, function):
+                            self.id = id
+                            self.type = "function"
+                            self.function = function
+                    
+                    mock_tc = MockToolCall(
+                        id=f"call_{int(time.time())}",
+                        function=MockFunction(name=tool_name, arguments=json.dumps(args_dict))
+                    )
+                    print(f"Parsed tag-based fallback tool call: {tool_name} with args: {args_dict}")
+
+            # Form 2: Brace-based {{tool_name|param1=val1|param2=val2}}
+            if not mock_tc and ("mcp_" in message.content or any(t["function"]["name"] in message.content for t in LOCAL_TOOLS)):
+                tool_pattern = r'\{\{((?:mcp_\w+|get_battery|set_volume|set_eye_color|play_intent))\|(.*?)\}\}'
+                match = re.search(tool_pattern, message.content)
+                if match:
+                    import urllib.parse
+                    tool_name = match.group(1)
+                    args_str = match.group(2)
+                    intro_text = message.content[:match.start()].strip()
+                    
+                    # Parse params separated by pipe '|'
+                    args_dict = {}
+                    for part in args_str.split("|"):
+                        if "=" in part:
+                            k, v = part.split("=", 1)
+                            v_decoded = urllib.parse.unquote_plus(v)
+                            if v_decoded.isdigit():
+                                args_dict[k] = int(v_decoded)
+                            else:
+                                args_dict[k] = v_decoded
+                                
+                    class MockFunction:
+                        def __init__(self, name, arguments):
+                            self.name = name
+                            self.arguments = arguments
+                    class MockToolCall:
+                        def __init__(self, id, function):
+                            self.id = id
+                            self.type = "function"
+                            self.function = function
+                            
+                    mock_tc = MockToolCall(
+                        id=f"call_{int(time.time())}",
+                        function=MockFunction(name=tool_name, arguments=json.dumps(args_dict))
+                    )
+                    print(f"Parsed brace-based fallback tool call: {tool_name} with args: {args_dict}")
+
+            # Form 3: plain text name + JSON (e.g. name{"query": ...})
+            if not mock_tc:
+                tool_names_regex = r'(mcp_\w+|get_battery|set_volume|set_eye_color|play_intent)'
+                # Double curly braces compile to literal braces in f-string
+                match_plain = re.search(rf'\b{tool_names_regex}\s*({{.*?}})', message.content, re.DOTALL)
+                if match_plain:
+                    tool_name = match_plain.group(1)
+                    tool_args_str = match_plain.group(2).strip()
+                    intro_text = message.content[:match_plain.start()].strip()
+                    
+                    # Parse JSON arguments robustly
+                    args_dict = {}
+                    try:
+                        args_dict = json.loads(tool_args_str)
+                    except json.JSONDecodeError:
+                        try:
+                            import ast
+                            args_dict = ast.literal_eval(tool_args_str)
+                        except Exception:
+                            try:
+                                args_dict = json.loads(tool_args_str.replace("'", '"'))
+                            except Exception:
+                                pass
+                    
+                    if "max_results" in args_dict:
+                        try:
+                            args_dict["max_results"] = int(args_dict["max_results"])
+                        except Exception:
+                            pass
+                            
+                    class MockFunction:
+                        def __init__(self, name, arguments):
+                            self.name = name
+                            self.arguments = arguments
+                    class MockToolCall:
+                        def __init__(self, id, function):
+                            self.id = id
+                            self.type = "function"
+                            self.function = function
+                    mock_tc = MockToolCall(
+                        id=f"call_{int(time.time())}",
+                        function=MockFunction(name=tool_name, arguments=json.dumps(args_dict))
+                    )
+                    print(f"Parsed plain text fallback tool call: {tool_name} with args: {args_dict}")
+
+            if mock_tc:
+                message.content = intro_text
+                message.tool_calls = [mock_tc]
 
         # Case A: LLM returns final text (no tool calls)
         if not message.tool_calls:

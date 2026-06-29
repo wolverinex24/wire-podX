@@ -199,14 +199,13 @@ func GetActionsFromString(input string) []RobotAction {
 		}
 
 		cmdPlusParam := strings.Split(strings.TrimSpace(strings.Split(spl, "}}")[0]), "||")
-		if len(cmdPlusParam) < 2 {
-			continue
-		}
-		cmd := strings.TrimSpace(cmdPlusParam[0])
-		param := strings.TrimSpace(cmdPlusParam[1])
-		action := CmdParamToAction(cmd, param)
-		if action.Action != -1 {
-			actions = append(actions, action)
+		if len(cmdPlusParam) >= 2 {
+			cmd := strings.TrimSpace(cmdPlusParam[0])
+			param := strings.TrimSpace(cmdPlusParam[1])
+			action := CmdParamToAction(cmd, param)
+			if action.Action != -1 {
+				actions = append(actions, action)
+			}
 		}
 		if len(strings.Split(spl, "}}")) != 1 {
 			action := RobotAction{
